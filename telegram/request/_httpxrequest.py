@@ -222,12 +222,15 @@ class HTTPXRequest(BaseRequest):
         return self._client.timeout.read
 
     def _build_client(self) -> httpx.AsyncClient:
+        # Remove proxy setting if it exists to avoid compatibility issues
+        self._client_kwargs.pop('proxy', None)
         return httpx.AsyncClient(**self._client_kwargs)
 
     async def initialize(self) -> None:
-        """See :meth:`BaseRequest.initialize`."""
-        if self._client.is_closed:
-            self._client = self._build_client()
+        """See :meth:`telegram.request.BaseRequest.initialize`."""
+        if self._client:
+            await self._client.aclose()
+        self._client = self._build_client()
 
     async def shutdown(self) -> None:
         """See :meth:`BaseRequest.shutdown`."""

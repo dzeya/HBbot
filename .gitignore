@@ -1,9 +1,37 @@
-# Byte-compiled / optimized / DLL files
+# Environment variables
+.env
+
+# Python
 __pycache__/
 *.py[cod]
-
-# C extensions
+*$py.class
 *.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environment
+venv/
+ENV/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
 
 # Distribution / packaging
 .Python
@@ -66,14 +94,10 @@ docs/_build/
 
 # PyBuilder
 target/
-.idea/
 .run/
 
 # Sublime Text 2
 *.sublime*
-
-# VS Code
-.vscode
 
 # unitests files
 game.gif
@@ -90,9 +114,6 @@ telegram.jpg
 
 # Exclude .exrc file for Vim
 .exrc
-
-# virtual env
-venv*
 
 # environment manager:
 .mise.toml
