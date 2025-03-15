@@ -1,0 +1,5 @@
+other = "Bump codecov/codecov-action from 5.1.2 to 5.4.0"
+[[pull_requests]]
+uid = "4"
+author_uid = "dependabot[bot]"
+closes_threads = []
