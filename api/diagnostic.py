@@ -2,6 +2,7 @@ import json
 import os
 import requests
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler
 
 # Get Telegram token from environment variables
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8150544076:AAF8GTQ-3CrkOdBvnOmJ85s0hKu0RE4swwE")
@@ -151,8 +152,8 @@ def get_diagnostic_report(user_id):
     print("Diagnostic report generated successfully")
     return "\n".join(report)
 
-def handler(request, context):
-    """Dedicated diagnostic handler"""
+def process_diagnostic_request(request):
+    """Process diagnostic request and return a response"""
     print(f"Diagnostic handler received request: method={request.get('method', 'UNKNOWN')}")
     
     try:
@@ -246,4 +247,65 @@ def handler(request, context):
                 "status": "error",
                 "message": str(e)
             })
-        } 
+        }
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        """Handle GET requests"""
+        try:
+            # Create a request object similar to what our process_request expects
+            request = {
+                "method": "GET",
+                "path": self.path
+            }
+            
+            # Process the request
+            response = process_diagnostic_request(request)
+            
+            # Send the response
+            self.send_response(response["statusCode"])
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(response["body"].encode('utf-8'))
+            
+        except Exception as e:
+            print(f"Error in diagnostic GET handler: {e}")
+            self.send_response(200)  # Still return 200 to Telegram
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }).encode('utf-8'))
+    
+    def do_POST(self):
+        """Handle POST requests"""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            body = self.rfile.read(content_length).decode('utf-8')
+            
+            # Create a request object similar to what our process_request expects
+            request = {
+                "method": "POST",
+                "path": self.path,
+                "body": body
+            }
+            
+            # Process the request
+            response = process_diagnostic_request(request)
+            
+            # Send the response
+            self.send_response(response["statusCode"])
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(response["body"].encode('utf-8'))
+            
+        except Exception as e:
+            print(f"Error in diagnostic POST handler: {e}")
+            self.send_response(200)  # Still return 200 to Telegram
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }).encode('utf-8')) 

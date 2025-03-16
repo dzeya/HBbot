@@ -2,8 +2,9 @@ import json
 import os
 import requests
 from datetime import datetime
+from http.server import BaseHTTPRequestHandler
 
-# Version marker to force new deployment - v1.0.1
+# Version marker to force new deployment - v1.0.2
 # Get Telegram token from environment variables
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8150544076:AAF8GTQ-3CrkOdBvnOmJ85s0hKu0RE4swwE")
 
@@ -209,12 +210,8 @@ def get_diagnostic_report(user_id):
     print("Diagnostic report generated successfully")
     return "\n".join(report)
 
-def handler(request, context):
-    """Ultra-minimal Vercel serverless function handler"""
-    
-    # Log request info
-    print(f"Request received: method={request.get('method', 'UNKNOWN')}")
-    
+def process_request(request):
+    """Process the request and return a response"""
     try:
         # Handle GET requests (health checks)
         if request.get("method", "") == "GET":
@@ -287,7 +284,7 @@ def handler(request, context):
                         response_text = "👋 Welcome to the HB Telegram Bot! I'm now active and ready to help you."
                     else:
                         print("No special command detected")
-                        response_text = f"I received your message: {text}"
+                        response_text = f"I received: {text}"
                     
                     # Send response using Telegram API
                     if TELEGRAM_TOKEN:
@@ -350,4 +347,65 @@ def handler(request, context):
                 "status": "error",
                 "message": str(e)
             })
-        } 
+        }
+
+class handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        """Handle GET requests"""
+        try:
+            # Create a request object similar to what our process_request expects
+            request = {
+                "method": "GET",
+                "path": self.path
+            }
+            
+            # Process the request
+            response = process_request(request)
+            
+            # Send the response
+            self.send_response(response["statusCode"])
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(response["body"].encode('utf-8'))
+            
+        except Exception as e:
+            print(f"Error in GET handler: {e}")
+            self.send_response(200)  # Still return 200 to Telegram
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }).encode('utf-8'))
+    
+    def do_POST(self):
+        """Handle POST requests"""
+        try:
+            content_length = int(self.headers['Content-Length'])
+            body = self.rfile.read(content_length).decode('utf-8')
+            
+            # Create a request object similar to what our process_request expects
+            request = {
+                "method": "POST",
+                "path": self.path,
+                "body": body
+            }
+            
+            # Process the request
+            response = process_request(request)
+            
+            # Send the response
+            self.send_response(response["statusCode"])
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(response["body"].encode('utf-8'))
+            
+        except Exception as e:
+            print(f"Error in POST handler: {e}")
+            self.send_response(200)  # Still return 200 to Telegram
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "status": "error",
+                "message": str(e)
+            }).encode('utf-8')) 
