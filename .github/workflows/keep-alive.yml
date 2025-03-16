@@ -1,0 +1,16 @@
+name: Keep Vercel Function Warm
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Run every 5 minutes
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping webhook
+        run: curl -sS ${{ secrets.WEBHOOK_URL }} || echo "Ping failed but continuing"
+      
+      - name: Log success
+        run: echo "Webhook pinged successfully at $(date)" 
