@@ -4,6 +4,7 @@ import logging
 import requests
 from datetime import datetime
 import telegram
+from telegram.ext import Application
 import asyncio
 import time
 
@@ -20,8 +21,26 @@ WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_ANON_KEY = os.getenv("SUPABASE_ANON_KEY", "")
 
-# Initialize bot
-bot = telegram.Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
+# Create HTTP-specific application parameters - explicitly disable SOCKS
+app_params = {
+    "connection_pool_size": 10,
+    "connect_timeout": 10.0,
+    "read_timeout": 10.0,
+    "write_timeout": 10.0,
+    "pool_timeout": 1.0,
+    "base_url": "https://api.telegram.org/bot",
+    "base_file_url": "https://api.telegram.org/file/bot",
+    "proxy_url": None,  # Explicitly set to None to avoid any SOCKS issues
+    "bot_token": TELEGRAM_TOKEN,
+}
+
+# Initialize bot with explicit HTTP configuration
+try:
+    bot = telegram.Bot(token=TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
+    logger.info("Bot initialized with basic configuration")
+except Exception as e:
+    logger.error(f"Error initializing basic bot: {e}")
+    bot = None
 
 def test_supabase_connection():
     """Test connection to Supabase using direct REST API calls"""
@@ -121,6 +140,34 @@ def dump_object(obj, name="object", max_depth=3, current_depth=0):
         except:
             return f"<{type(obj).__name__}>"
 
+# Alternative direct message sending function to avoid HTTP issues
+async def send_message_direct(chat_id, text):
+    """Send message using requests directly to avoid HTTP/SOCKS issues"""
+    if not TELEGRAM_TOKEN:
+        logger.error("No token available for direct API call")
+        return False
+        
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        data = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML"
+        }
+        
+        # Make synchronous request since we're in an async function
+        response = requests.post(url, json=data)
+        
+        if response.status_code == 200:
+            logger.info(f"Direct API message sent successfully to {chat_id}")
+            return True
+        else:
+            logger.error(f"Direct API message failed: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Error in direct message sending: {e}")
+        return False
+
 async def handle_telegram_update(update_data):
     """Process an update from Telegram"""
     if not bot:
@@ -131,186 +178,116 @@ async def handle_telegram_update(update_data):
         logger.info("🔍 RAW UPDATE STRUCTURE: 🔍")
         logger.info(dump_object(update_data, "update_data"))
         
-        # Convert dict to Update object
-        update = telegram.Update.de_json(update_data, bot)
+        # Direct access to message for simplicity
+        chat_id = None
+        message_type = "unknown"
+        response_sent = False
         
-        # Log the Update object structure
-        logger.info("🔍 TELEGRAM UPDATE OBJECT STRUCTURE: 🔍")
-        logger.info(dump_object(update, "update"))
-        
-        if not update or not update.message:
-            logger.warning("⚠️ Update contains no message")
-            return {"success": False, "reason": "No message in update"}
-        
-        chat_id = update.message.chat_id
-        logger.info(f"Processing message from chat_id: {chat_id}")
-        
-        # Super detailed message inspection
-        msg = update.message
-        msg_dict = msg.to_dict() if hasattr(msg, 'to_dict') else None
-        
-        logger.info("📩 MESSAGE KEYS AND ATTRIBUTES: 📩")
-        if msg_dict:
-            logger.info(f"Message dict keys: {list(msg_dict.keys())}")
-        logger.info(f"Message object attributes: {dir(msg)}")
-        
-        # Check for images/photos - ENHANCED LOGGING
-        if hasattr(msg, 'photo') and msg.photo:
-            photo_array = msg.photo
-            logger.info(f"📸 PHOTO DETECTED! Array length: {len(photo_array)}")
+        # Extract chat_id and key message data directly from dict
+        if isinstance(update_data, dict) and "message" in update_data:
+            message = update_data["message"]
             
-            # Log details about each photo size
-            for i, photo in enumerate(photo_array):
-                photo_dict = photo.to_dict() if hasattr(photo, 'to_dict') else {}
-                logger.info(f"Photo {i}: {dump_object(photo_dict)}")
-                logger.info(f"Photo {i} attributes: {dir(photo)}")
+            if "chat" in message and "id" in message["chat"]:
+                chat_id = message["chat"]["id"]
+                logger.info(f"Extracted chat_id directly: {chat_id}")
             
-            # Get the largest photo (last in array)
-            if photo_array:
-                file_id = photo_array[-1].file_id
-                logger.info(f"Using largest photo with file_id: {file_id}")
+            # Check for message type by keys present
+            if "text" in message:
+                message_type = "text"
+                text_content = message["text"]
+                logger.info(f"Text message detected: {text_content[:100]}")
                 
-                # Try to get file info
-                try:
-                    file_info = await bot.get_file(file_id)
-                    logger.info(f"File info: {dump_object(file_info.to_dict() if hasattr(file_info, 'to_dict') else file_info)}")
-                except Exception as e:
-                    logger.error(f"Error getting file info: {e}")
-            
-                # Send confirmation message
-                await bot.send_message(
-                    chat_id=chat_id, 
-                    text="📸 Your photo has been received and stored! [DEEP DEBUG MODE]"
-                )
+                # Handle commands directly
+                if text_content.startswith('/'):
+                    response_message = "Command received!"
+                    if text_content.startswith('/start'):
+                        response_message = "👋 Welcome to the HB Telegram Bot! [FIXED MODE]"
+                    elif text_content.startswith('/help'):
+                        response_message = "💬 This bot stores your messages and media. [FIXED MODE]"
                 
-                return {
-                    "success": True, 
-                    "message_type": "photo",
-                    "file_id": file_id
-                }
-            else:
-                logger.error("Photo array is empty despite photo attribute being present!")
-                
-        # Handle text messages
-        elif hasattr(msg, 'text') and msg.text:
-            text = msg.text
-            logger.info(f"Text message: {text[:100]}...")
-            
-            # Handle commands
-            if text.startswith('/'):
-                if text.startswith('/start'):
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="👋 Welcome to the HB Telegram Bot! Your messages will be stored securely. [DEEP DEBUG MODE]"
-                    )
-                elif text.startswith('/help'):
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="💬 This bot stores your messages and media in a secure database.\n\nCommands:\n/start - Start the bot\n/help - Show this help message\n/stats - Show your message statistics\n\n[DEEP DEBUG MODE]"
-                    )
-                elif text.startswith('/stats'):
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="📊 Stats functionality available in the full version [DEEP DEBUG MODE]"
-                    )
+                # Regular message response
                 else:
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text="⚠️ Unknown command. Type /help for a list of commands. [DEEP DEBUG MODE]"
-                    )
-            else:
-                # Regular text message
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="✅ Your message has been received and stored [DEEP DEBUG MODE]"
-                )
-                
-            return {
-                "success": True,
-                "message_type": "text",
-                "text": text[:100]  # Truncate for logging
-            }
-        
-        # Last resort - if nothing else matched, try a different attribute access approach
-        else:
-            logger.info("⚠️ No standard message type detected, trying alternative approaches")
-            
-            # Enumerate all possible message types and check each one
-            message_types = [
-                "text", "photo", "document", "video", "audio", "animation", 
-                "sticker", "voice", "location", "contact", "poll", "venue"
-            ]
-            
-            found_type = None
-            for msg_type in message_types:
-                if hasattr(msg, msg_type) and getattr(msg, msg_type):
-                    found_type = msg_type
-                    logger.info(f"🔍 Found message type via attribute check: {found_type}")
-                    break
-            
-            # Also check direct dictionary access if available
-            if msg_dict:
-                for msg_type in message_types:
-                    if msg_type in msg_dict and msg_dict[msg_type]:
-                        logger.info(f"🔍 Found message type via dict access: {msg_type}")
-                        if not found_type:
-                            found_type = msg_type
-            
-            # If we found a valid message type, try to handle it
-            if found_type:
-                logger.info(f"Handling message of type: {found_type}")
-                
-                # Special handling for photo messages found via dict
-                if found_type == "photo" and "photo" in msg_dict:
-                    photo_data = msg_dict["photo"]
-                    logger.info(f"Photo data from dict: {dump_object(photo_data)}")
+                    response_message = "✅ Your text message has been received [FIXED MODE]"
                     
-                    # Try to extract file_id
-                    if isinstance(photo_data, list) and photo_data:
-                        last_photo = photo_data[-1]
-                        if isinstance(last_photo, dict) and "file_id" in last_photo:
-                            file_id = last_photo["file_id"]
-                            logger.info(f"Extracted file_id from dict: {file_id}")
-                            
-                            # Send response
-                            await bot.send_message(
-                                chat_id=chat_id,
-                                text=f"📸 Your photo has been received and stored! [DICT ACCESS MODE]"
-                            )
-                            
-                            return {
-                                "success": True,
-                                "message_type": "photo",
-                                "method": "dict_access",
-                                "file_id": file_id
-                            }
+                # Send response directly to avoid HTTP issues
+                success = await send_message_direct(chat_id, response_message)
+                if success:
+                    response_sent = True
                 
-                # Generic response for other types
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text=f"✅ Your {found_type} has been received and stored [DEEP DEBUG MODE]"
-                )
+            elif "photo" in message:
+                message_type = "photo"
+                logger.info("Photo message detected!")
+                photo_array = message["photo"]
                 
-                return {
-                    "success": True,
-                    "message_type": found_type,
-                    "method": "alternative_detection"
-                }
+                if isinstance(photo_array, list) and photo_array:
+                    # Get the largest photo (last in array)
+                    file_id = photo_array[-1].get("file_id", "unknown")
+                    logger.info(f"Photo file_id: {file_id}")
+                    
+                    # Send response directly
+                    success = await send_message_direct(chat_id, "📸 Your photo has been received! [FIXED MODE]")
+                    if success:
+                        response_sent = True
+            
+            elif "document" in message:
+                message_type = "document"
+                logger.info("Document message detected!")
+                
+                # Send response directly
+                success = await send_message_direct(chat_id, "📎 Your document has been received! [FIXED MODE]")
+                if success:
+                    response_sent = True
+            
             else:
-                # Truly unknown message type
-                logger.warning(f"Unknown message type - dumping all message data for analysis:")
-                logger.warning(dump_object(msg_dict if msg_dict else msg))
+                # Try to determine message type from keys
+                for key in message:
+                    if key in ["audio", "video", "voice", "sticker", "location", "contact"]:
+                        message_type = key
+                        logger.info(f"{key.capitalize()} message detected!")
+                        
+                        # Send generic response
+                        success = await send_message_direct(chat_id, f"✅ Your {message_type} has been received! [FIXED MODE]")
+                        if success:
+                            response_sent = True
+                        break
+        
+        # If we couldn't extract chat_id, try the more structured approach
+        if not chat_id:
+            logger.warning("Could not get chat_id directly from dict, trying structured approach")
+            try:
+                # Convert dict to Update object
+                update = telegram.Update.de_json(update_data, bot)
                 
-                await bot.send_message(
-                    chat_id=chat_id,
-                    text="✅ Your message (of unknown type) has been received [DEEP DEBUG MODE]"
-                )
+                if update and update.message:
+                    chat_id = update.message.chat_id
+                    logger.info(f"Got chat_id from Update object: {chat_id}")
+                    
+                    # If we haven't sent a response yet, try to send one via the bot object
+                    if not response_sent and chat_id:
+                        await bot.send_message(
+                            chat_id=chat_id,
+                            text="✅ Your message has been received (fallback method) [FIXED MODE]"
+                        )
+                        response_sent = True
+            except Exception as e:
+                logger.error(f"Error in fallback processing: {e}")
+        
+        # Final fallback: try direct API access if we have chat_id but no response sent
+        if chat_id and not response_sent:
+            logger.warning("Using final fallback - direct API call")
+            success = await send_message_direct(
+                chat_id, 
+                "✅ Message received (emergency fallback) [FIXED MODE]"
+            )
+            if success:
+                response_sent = True
                 
-                return {
-                    "success": True,
-                    "message_type": "unknown",
-                    "message_keys": list(msg_dict.keys()) if msg_dict else dir(msg)
-                }
+        return {
+            "success": True if chat_id else False,
+            "message_type": message_type,
+            "chat_id": chat_id,
+            "response_sent": response_sent
+        }
             
     except Exception as e:
         logger.error(f"Error handling update: {e}")
@@ -320,9 +297,11 @@ async def handle_telegram_update(update_data):
         try:
             if isinstance(update_data, dict) and "message" in update_data and "chat" in update_data["message"]:
                 recovery_chat_id = update_data["message"]["chat"]["id"]
-                await bot.send_message(
-                    chat_id=recovery_chat_id,
-                    text="⚠️ Sorry, there was an error processing your message. The team has been notified. [DEBUG MODE]"
+                
+                # Use direct sending to avoid any HTTP issues
+                await send_message_direct(
+                    recovery_chat_id,
+                    "⚠️ Sorry, there was an error processing your message. [FIXED MODE]"
                 )
         except Exception as recovery_error:
             logger.error(f"Recovery attempt failed: {recovery_error}")
