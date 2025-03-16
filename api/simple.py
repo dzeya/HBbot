@@ -3,6 +3,7 @@ import os
 import requests
 from datetime import datetime
 
+# Version marker to force new deployment - v1.0.1
 # Get Telegram token from environment variables
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8150544076:AAF8GTQ-3CrkOdBvnOmJ85s0hKu0RE4swwE")
 
@@ -108,6 +109,7 @@ def save_message_to_supabase(message_data):
 
 def get_diagnostic_report(user_id):
     """Generate a full diagnostic report"""
+    print(f"Generating diagnostic report for user {user_id}...")
     # Start building the diagnostic report
     report = []
     
@@ -204,6 +206,7 @@ def get_diagnostic_report(user_id):
     report.append("• Stickers")
     report.append("• Animations/GIFs")
     
+    print("Diagnostic report generated successfully")
     return "\n".join(report)
 
 def handler(request, context):
@@ -222,7 +225,7 @@ def handler(request, context):
                 "statusCode": 200,
                 "body": json.dumps({
                     "status": "ok",
-                    "message": "Bot webhook is running",
+                    "message": "Bot webhook is running (updated)",
                     "supabase_connected": supabase_status,
                     "supabase_url": SUPABASE_URL
                 })
@@ -250,7 +253,7 @@ def handler(request, context):
                     last_name = user.get("last_name", "")
                     username = user.get("username", "")
                     
-                    print(f"Message from {chat_id} (User: {username or first_name}): {text}")
+                    print(f"Message from {chat_id} (User: {username or first_name}): '{text}'")
                     
                     # Save user data to Supabase
                     user_data = {
@@ -272,18 +275,24 @@ def handler(request, context):
                     
                     save_message_to_supabase(message_data)
                     
+                    # Debug print for command processing
+                    print(f"Processing command. Text: '{text}', Stripped: '{text.strip()}', Is diagnostic: {text.strip() == '/diagnostic'}")
+                    
                     # Handle /diagnostic command
                     if text and text.strip() == "/diagnostic":
+                        print("Diagnostic command detected!")
                         response_text = get_diagnostic_report(user_id)
                     # Special handling for /start command
                     elif text.strip() == "/start":
                         response_text = "👋 Welcome to the HB Telegram Bot! I'm now active and ready to help you."
                     else:
+                        print("No special command detected")
                         response_text = f"I received your message: {text}"
                     
                     # Send response using Telegram API
                     if TELEGRAM_TOKEN:
                         try:
+                            print(f"Sending response: {response_text[:50]}{'...' if len(response_text) > 50 else ''}")
                             send_url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
                             payload = {
                                 "chat_id": chat_id,
