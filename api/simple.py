@@ -257,8 +257,7 @@ def handler(request, context):
                         "user_id": user_id,
                         "first_name": first_name,
                         "last_name": last_name,
-                        "username": username,
-                        "last_active": datetime.now().isoformat()
+                        "username": username
                     }
                     
                     save_user_to_supabase(user_data)
@@ -298,8 +297,7 @@ def handler(request, context):
                                 "user_id": user_id,
                                 "message_id": -1,  # Placeholder for bot message
                                 "message_text": response_text,
-                                "timestamp": datetime.now().isoformat(),
-                                "is_bot": True
+                                "timestamp": datetime.now().isoformat()
                             }
                             
                             save_message_to_supabase(response_data)
