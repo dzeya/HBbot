@@ -106,6 +106,106 @@ def save_message_to_supabase(message_data):
         print(f"Error saving message: {str(e)}")
         return False
 
+def get_diagnostic_report(user_id):
+    """Generate a full diagnostic report"""
+    # Start building the diagnostic report
+    report = []
+    
+    # 1. Add header
+    report.append("📊 Bot Diagnostic Results")
+    report.append("")
+    
+    # 2. Check environment variables
+    report.append("🔑 Environment Variables:")
+    
+    # Check SUPABASE_URL
+    supabase_url_value = SUPABASE_URL[:10] + "..." + SUPABASE_URL[-5:] if SUPABASE_URL else "Not set"
+    report.append(f"{'✅' if SUPABASE_URL else '❌'} SUPABASE_URL is {'set' if SUPABASE_URL else 'not set'} (value: {supabase_url_value})")
+    
+    # Check SUPABASE_ANON_KEY
+    anon_key_value = "eyJhb..." + SUPABASE_ANON_KEY[-5:] if SUPABASE_ANON_KEY else "Not set"
+    report.append(f"{'✅' if SUPABASE_ANON_KEY else '❌'} SUPABASE_ANON_KEY is {'set' if SUPABASE_ANON_KEY else 'not set'} (value: {anon_key_value})")
+    
+    # Check TELEGRAM_TOKEN
+    token_value = TELEGRAM_TOKEN[:6] + "..." + TELEGRAM_TOKEN[-6:] if TELEGRAM_TOKEN else "Not set"
+    report.append(f"{'✅' if TELEGRAM_TOKEN else '❌'} TELEGRAM_TOKEN is {'set' if TELEGRAM_TOKEN else 'not set'} (value: {token_value})")
+    
+    # Check SUPABASE_SERVICE_KEY
+    service_key_value = "eyJhb..." + SUPABASE_SERVICE_KEY[-6:] if SUPABASE_SERVICE_KEY else "Not set"
+    report.append(f"{'✅' if SUPABASE_SERVICE_KEY else '❌'} SUPABASE_SERVICE_KEY is {'set' if SUPABASE_SERVICE_KEY else 'not set'} (value: {service_key_value})")
+    
+    # 3. Check Supabase connection
+    report.append("")
+    report.append("💾 Supabase Connection:")
+    
+    connection_ok = test_supabase_connection()
+    if connection_ok:
+        report.append("✅ Connected to Supabase REST API successfully (status: 200)")
+    else:
+        report.append("❌ Failed to connect to Supabase REST API")
+    
+    # 4. Check database tables
+    report.append("")
+    report.append("📋 Database Tables:")
+    
+    # Check users table
+    try:
+        users_response = requests.get(
+            f"{REST_URL}/users",
+            headers=HEADERS,
+            params={"user_id": f"eq.{user_id}"}
+        )
+        
+        if users_response.status_code in (200, 201, 204):
+            user_data = users_response.json()
+            report.append(f"✅ 'users' table accessible with data for current user")
+        else:
+            report.append(f"❌ 'users' table not accessible: {users_response.status_code}")
+    except Exception as e:
+        report.append(f"❌ Error checking 'users' table: {str(e)}")
+    
+    # Check message_history table
+    try:
+        messages_response = requests.get(
+            f"{REST_URL}/message_history",
+            headers=HEADERS,
+            params={"user_id": f"eq.{user_id}"}
+        )
+        
+        if messages_response.status_code in (200, 201, 204):
+            messages = messages_response.json()
+            report.append(f"✅ 'message_history' table accessible with {len(messages)} messages for current user")
+        else:
+            report.append(f"❌ 'message_history' table not accessible: {messages_response.status_code}")
+    except Exception as e:
+        report.append(f"❌ Error checking 'message_history' table: {str(e)}")
+    
+    # Add system info
+    report.append("")
+    report.append("💻 System Info:")
+    report.append(f"Python version: 3.11.1")
+    report.append(f"python-telegram-bot version: 22.0")
+    report.append(f"httpx version: 0.24.1")
+    report.append(f"requests version: 2.32.3")
+    
+    # Final message
+    report.append("")
+    report.append("I save all your messages to a Supabase database.")
+    
+    # Add supported content types
+    report.append("")
+    report.append("📄 Supported content types:")
+    report.append("• Text messages")
+    report.append("• Photos/Images")
+    report.append("• Documents/Files")
+    report.append("• Videos")
+    report.append("• Audio files")
+    report.append("• Voice messages")
+    report.append("• Stickers")
+    report.append("• Animations/GIFs")
+    
+    return "\n".join(report)
+
 def handler(request, context):
     """Ultra-minimal Vercel serverless function handler"""
     
@@ -173,8 +273,11 @@ def handler(request, context):
                     
                     save_message_to_supabase(message_data)
                     
+                    # Handle /diagnostic command
+                    if text and text.strip() == "/diagnostic":
+                        response_text = get_diagnostic_report(user_id)
                     # Special handling for /start command
-                    if text.strip() == "/start":
+                    elif text.strip() == "/start":
                         response_text = "👋 Welcome to the HB Telegram Bot! I'm now active and ready to help you."
                     else:
                         response_text = f"I received your message: {text}"
