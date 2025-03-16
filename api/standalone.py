@@ -4,7 +4,7 @@ import os
 import requests
 from datetime import datetime
 
-# Version marker to force new deployment - v1.0.3
+# Version marker to force new deployment - v1.0.4
 # Basic configuration
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "8150544076:AAF8GTQ-3CrkOdBvnOmJ85s0hKu0RE4swwE")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", "")
@@ -136,11 +136,12 @@ def get_diagnostic_report(user_id):
     report.append("💻 System Info:")
     report.append(f"Python version: 3.11.1")
     report.append(f"Current time: {datetime.now().isoformat()}")
-    report.append(f"Standalone handler version: v1.0.3")
+    report.append(f"Standalone handler version: v1.0.4")
     
     print("Diagnostic report generated successfully")
     return "\n".join(report)
 
+# Using the BaseHTTPRequestHandler approach for Vercel
 class handler(BaseHTTPRequestHandler):
     def handle_error(self, error_message):
         self.send_response(200)  # Still return 200 to Telegram
