@@ -62,8 +62,13 @@ async def send_message(chat_id, text):
             logger.error("Bot not initialized")
             return {"success": False, "error": "Bot not initialized"}
             
-        await bot.send_message(chat_id=chat_id, text=text)
-        return {"success": True}
+        logger.info(f"Sending message to chat_id {chat_id}: {text[:30]}...")
+        message = await bot.send_message(chat_id=chat_id, text=text)
+        logger.info(f"Message sent successfully: {message.message_id}")
+        return {"success": True, "message_id": message.message_id}
+    except telegram.error.TelegramError as e:
+        logger.error(f"Telegram error sending message: {e}")
+        return {"success": False, "error": f"Telegram error: {str(e)}"}
     except Exception as e:
         logger.error(f"Error sending message: {e}")
         return {"success": False, "error": str(e)}
@@ -71,14 +76,18 @@ async def send_message(chat_id, text):
 async def handle_update(update_data):
     """Process the incoming update from Telegram"""
     try:
+        logger.info("Converting update_data to Update object")
         update = telegram.Update.de_json(update_data, bot)
+        logger.info(f"Update object created: {update}")
         
         # Handle different types of messages
         if update.message:
             chat_id = update.message.chat_id
+            logger.info(f"Processing message from chat_id: {chat_id}")
             
             # Handle commands
             if update.message.text:
+                logger.info(f"Processing text message: {update.message.text[:50]}")
                 if update.message.text.startswith('/start'):
                     return await send_message(chat_id, "👋 Welcome to the HB Telegram Bot! Your messages will be stored securely.")
                 
@@ -95,21 +104,35 @@ async def handle_update(update_data):
             
             # Handle media
             elif update.message.photo:
+                logger.info(f"Processing photo message. Photo size: {len(update.message.photo)}")
+                # Get photo details for debugging
+                photo_sizes = []
+                for photo in update.message.photo:
+                    photo_sizes.append(f"{photo.width}x{photo.height}")
+                logger.info(f"Photo sizes: {', '.join(photo_sizes)}")
+                
+                # Send acknowledgment for the photo
                 return await send_message(chat_id, "📷 Your photo has been received and stored")
             
             elif update.message.document:
+                logger.info(f"Processing document: {update.message.document.file_name}")
                 return await send_message(chat_id, "📎 Your document has been received and stored")
             
             elif update.message.video:
+                logger.info(f"Processing video")
                 return await send_message(chat_id, "🎬 Your video has been received and stored")
             
             else:
+                logger.info(f"Processing other message type")
                 return await send_message(chat_id, "✅ Your message has been received and stored")
+        else:
+            logger.info("Update does not contain a message")
         
         return {"success": True, "message": "Update processed"}
     
     except Exception as e:
         logger.error(f"Error handling update: {e}")
+        logger.error(f"Update data that caused the error: {json.dumps(update_data, default=str)[:300]}")
         return {"success": False, "error": str(e)}
 
 async def set_webhook():
@@ -150,8 +173,23 @@ async def process_telegram_update(request_body):
         # Parse the update data
         update_data = request_body
         
-        # Log the incoming update
-        logger.info(f"Received update: {json.dumps(update_data, default=str)[:200]}...")
+        # Log the incoming update with more detail for debugging
+        update_type = "unknown"
+        if isinstance(update_data, dict):
+            if "message" in update_data:
+                if "photo" in update_data["message"]:
+                    update_type = "photo"
+                elif "text" in update_data["message"]:
+                    update_type = "text"
+                elif "document" in update_data["message"]:
+                    update_type = "document"
+                else:
+                    update_type = "other_message"
+            else:
+                update_type = "non_message"
+        
+        logger.info(f"Received update type: {update_type}")
+        logger.info(f"Received update data: {json.dumps(update_data, default=str)[:300]}...")
         
         # Process the update
         result = await handle_update(update_data)
@@ -240,6 +278,7 @@ def init():
 def handler(request, context):
     """Entry point for Vercel serverless function"""
     method = request.get('method', '')
+    logger.info(f"Handler called with method: {method}")
     
     # Health check endpoint
     if method == 'GET':
@@ -273,18 +312,36 @@ def handler(request, context):
         try:
             # Get the body from the request
             body = request.get('body', '{}')
+            logger.info(f"Received POST body type: {type(body)}")
             
             # Convert to dict if it's a string
             if isinstance(body, str):
-                body = json.loads(body)
+                logger.info(f"Converting string body to JSON. Length: {len(body)}")
+                try:
+                    body = json.loads(body)
+                    logger.info(f"Successfully parsed JSON. Keys: {', '.join(body.keys())}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Error parsing JSON: {e}")
+                    logger.error(f"Body preview: {body[:100]}")
+                    # Return error response for invalid JSON
+                    return {
+                        'statusCode': 400,
+                        'body': json.dumps({'error': 'Invalid JSON payload'})
+                    }
             
             # Log that we received a webhook call
             logger.info(f"Received webhook call at {datetime.now().isoformat()}")
-                
-            # Process the update asynchronously - don't wait for completion
+            
+            # Check for key Telegram update components
+            if isinstance(body, dict):
+                if 'update_id' not in body:
+                    logger.warning("Received webhook without update_id - might not be from Telegram")
+                    logger.warning(f"Body keys: {', '.join(body.keys() if isinstance(body, dict) else ['<not a dict>'])}")
+            
+            # Process the update asynchronously
             response = asyncio.run(process_telegram_update(body))
             
-            # Return immediately to prevent Vercel from waiting
+            # Return success response
             return {
                 'statusCode': 200,
                 'body': json.dumps({"success": True, "message": "Update received"})
