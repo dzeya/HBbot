@@ -2,14 +2,30 @@
   "version": 2,
   "builds": [
     {
-      "src": "api/standalone.py",
-      "use": "@vercel/python"
+      "src": "api/simple.py",
+      "use": "@vercel/python",
+      "config": {
+        "runtime": "python3.9",
+        "installCommand": "pip install -r api/serverless_requirements.txt"
+      }
+    },
+    {
+      "src": "api/diagnostic.py",
+      "use": "@vercel/python",
+      "config": {
+        "runtime": "python3.9",
+        "installCommand": "pip install -r api/serverless_requirements.txt"
+      }
     }
   ],
   "routes": [
     {
+      "src": "/diag",
+      "dest": "api/diagnostic.py"
+    },
+    {
       "src": "/(.*)",
-      "dest": "api/standalone.py"
+      "dest": "api/simple.py"
     }
   ],
   "env": {
