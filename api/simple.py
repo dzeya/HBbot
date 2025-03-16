@@ -4,7 +4,6 @@ import requests
 import base64
 import time
 from datetime import datetime
-from http.server import BaseHTTPRequestHandler
 
 # Version marker to force new deployment - v1.1.0
 # Get Telegram token from environment variables
@@ -877,9 +876,19 @@ def process_request(request):
         }
 
 # This handler will be called from Vercel
-def handler(request, context):
+def handler(request):
     """Vercel serverless function handler"""
-    return process_request(request)
+    # Process the request using our existing function
+    response = process_request(request)
+    
+    # Return the response in the format expected by Vercel
+    return {
+        "statusCode": response.get("statusCode", 200),
+        "body": response.get("body", "{}"),
+        "headers": {
+            "Content-Type": "application/json"
+        }
+    }
 
 # For local testing
 if __name__ == "__main__":
