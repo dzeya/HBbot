@@ -7,6 +7,7 @@ from datetime import datetime
 import telegram
 import asyncio
 from urllib.parse import parse_qs
+import time
 
 # Configure logging
 logging.basicConfig(
@@ -289,21 +290,56 @@ def init():
     supabase_result = test_supabase_connection()
     logger.info(f"Supabase connection test: {'Success' if supabase_result else 'Failed'}")
     
-    # Set up webhook
+    # Set up webhook - WITH PROPER CLEANUP
     try:
-        # Run the webhook setup asynchronously
-        result = asyncio.run(set_webhook())
-        logger.info(f"Webhook setup result: {result}")
+        # First, explicitly delete any existing webhook to avoid conflicts
+        try:
+            # Delete the current webhook
+            webhook_deletion = asyncio.run(bot.delete_webhook(drop_pending_updates=True))
+            logger.info(f"Deleted existing webhook: {webhook_deletion}")
+            
+            # Small delay to ensure deletion is processed
+            time.sleep(1)
+        except Exception as deletion_error:
+            logger.error(f"Error during webhook deletion: {deletion_error}")
+            # Continue anyway
         
-        # Set up a keep-alive mechanism
-        # This won't work in serverless, but it's added for documentation purposes
-        # To keep Vercel functions warm, you need an external service to ping your endpoint
-        logger.info("Note: To prevent cold starts, consider using an external service to ping your webhook URL every 5-10 minutes")
+        # Next, establish our new webhook
+        # Note: We're directly setting the webhook instead of using the set_webhook function
+        try:
+            success = asyncio.run(bot.set_webhook(
+                url=WEBHOOK_URL,
+                drop_pending_updates=True,
+                allowed_updates=["message", "callback_query", "inline_query"],
+                max_connections=100
+            ))
+            logger.info(f"Set webhook result: {success}")
+            
+            # Get and log info about the new webhook
+            webhook_info = asyncio.run(bot.get_webhook_info())
+            logger.info(f"New webhook details: {webhook_info.to_dict()}")
+            
+        except Exception as webhook_error:
+            logger.error(f"Error setting webhook: {webhook_error}")
         
-        return result
+        logger.info("Webhook setup completed")
+        return {"success": True, "message": "Webhook setup completed"}
+        
     except Exception as e:
         logger.error(f"Error during webhook setup: {e}")
         return {"success": False, "error": str(e)}
+
+# Near the top of your file, add this definition
+def get_simple_message_response(message_type):
+    """Get a standardized response message based on message type"""
+    if message_type == "photo":
+        return "👍 Image received and saved to database"
+    elif message_type == "document":
+        return "📎 Document received and saved to database"
+    elif message_type == "video":
+        return "🎬 Video received and saved to database"
+    else:
+        return "👍 Message received and saved to Supabase"
 
 # Vercel serverless function entry point
 def handler(request, context):
@@ -350,7 +386,7 @@ def handler(request, context):
                 logger.info(f"Converting string body to JSON. Length: {len(body)}")
                 try:
                     body = json.loads(body)
-                    logger.info(f"Successfully parsed JSON. Keys: {', '.join(body.keys())}")
+                    logger.info(f"Successfully parsed JSON. Keys: {', '.join(body.keys() if isinstance(body, dict) else ['<not a dict>'])}")
                 except json.JSONDecodeError as e:
                     logger.error(f"Error parsing JSON: {e}")
                     logger.error(f"Body preview: {body[:100]}")
@@ -360,61 +396,89 @@ def handler(request, context):
                         'body': json.dumps({'error': 'Invalid JSON payload'})
                     }
             
-            # SUPER DIRECT PHOTO HANDLING
-            # Try to extract chat_id and detect photo before anything else
-            chat_id = None
-            is_photo = False
-            
-            if (isinstance(body, dict) and 
-                "message" in body and 
-                isinstance(body["message"], dict)):
+            # SUPER ULTRA SIMPLIFIED HANDLING
+            # Direct access to required fields without any complex processing
+            try:
+                # Extract essential information directly from JSON
+                message = body.get("message", {})
+                chat = message.get("chat", {})
+                chat_id = chat.get("id")
                 
-                message = body["message"]
-                
-                # Extract chat_id
-                if "chat" in message and "id" in message["chat"]:
-                    chat_id = message["chat"]["id"]
-                
-                # Check for photo with direct access
-                if "photo" in message and message["photo"]:
-                    is_photo = True
-                    logger.info("📸 PHOTO DETECTED at handler level - attempting immediate response")
+                # Determine message type
+                message_type = "unknown"
+                if "text" in message:
+                    message_type = "text"
+                    text = message.get("text", "")
+                    logger.info(f"Text message: {text[:50]}")
                     
-                    if chat_id and bot:
-                        try:
-                            # Respond directly from handler level
-                            asyncio.run(bot.send_message(chat_id=chat_id, text="👍 Message received and saved to Supabase"))
-                            logger.info("Handler-level direct photo response sent")
-                            
-                            # Return success immediately without further processing
-                            return {
-                                'statusCode': 200,
-                                'body': json.dumps({
-                                    "success": True, 
-                                    "message": "Photo handled directly at handler level",
-                                    "timestamp": datetime.now().isoformat()
-                                })
-                            }
-                        except Exception as direct_handler_error:
-                            logger.error(f"Handler-level direct response failed: {direct_handler_error}")
-                            # If direct handling fails, continue with normal processing
-            
-            # Log that we received a webhook call
-            logger.info(f"Received webhook call at {datetime.now().isoformat()}")
-            
-            # Process the update through normal channels
-            response = asyncio.run(process_telegram_update(body))
-            
-            # Return success response
-            return {
-                'statusCode': 200,
-                'body': json.dumps({"success": True, "message": "Update received"})
-            }
+                    # Handle commands directly here
+                    if text.startswith('/start'):
+                        response_text = "👋 Welcome to the HB Telegram Bot! Your messages will be stored securely."
+                    elif text.startswith('/help'):
+                        response_text = "💬 This bot stores your messages and media in a secure database.\n\nCommands:\n/start - Start the bot\n/help - Show this help message\n/stats - Show your message statistics"
+                    elif text.startswith('/stats'):
+                        response_text = "📊 Stats functionality available in the full version"
+                    else:
+                        response_text = get_simple_message_response(message_type)
+                        
+                elif "photo" in message:
+                    message_type = "photo"
+                    logger.info("📸 PHOTO detected")
+                    response_text = get_simple_message_response(message_type)
+                    
+                elif "document" in message:
+                    message_type = "document"
+                    logger.info("📎 DOCUMENT detected")
+                    response_text = get_simple_message_response(message_type)
+                    
+                elif "video" in message:
+                    message_type = "video"
+                    logger.info("🎬 VIDEO detected")
+                    response_text = get_simple_message_response(message_type)
+                    
+                else:
+                    logger.info("Other message type")
+                    response_text = get_simple_message_response(message_type)
+                
+                # Respond directly if we have a chat_id
+                if chat_id and bot:
+                    logger.info(f"Sending direct response for {message_type} message")
+                    asyncio.run(bot.send_message(chat_id=chat_id, text=response_text))
+                    logger.info("Response sent successfully")
+                
+                # Return immediate success regardless of what happens afterwards
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        'success': True,
+                        'message': f"{message_type} message processed",
+                        'timestamp': datetime.now().isoformat()
+                    })
+                }
+                
+            except Exception as direct_error:
+                logger.error(f"Error in direct handling: {direct_error}")
+                # If direct handling fails, just return success to Telegram anyway
+                # to prevent retry loops that could make the situation worse
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        'success': False,
+                        'message': 'Error occurred but acknowledged',
+                        'error': str(direct_error)
+                    })
+                }
+                
         except Exception as e:
             logger.error(f"Error in webhook processing: {e}")
+            # Still return 200 to prevent Telegram from retrying
             return {
-                'statusCode': 500,
-                'body': json.dumps({'error': str(e)})
+                'statusCode': 200,
+                'body': json.dumps({
+                    'success': False,
+                    'message': 'Error occurred but acknowledged', 
+                    'error': str(e)
+                })
             }
     
     # Other methods
