@@ -102,17 +102,48 @@ async def handle_update(update_data):
                 else:
                     return await send_message(chat_id, "✅ Your message has been received and stored")
             
-            # Handle media
+            # Handle media - PRIORITY CASE
             elif update.message.photo:
-                logger.info(f"Processing photo message. Photo size: {len(update.message.photo)}")
+                # This is now priority handling for photos
+                logger.info(f"PRIORITY: Processing photo message. Photo size: {len(update.message.photo)}")
+                
                 # Get photo details for debugging
                 photo_sizes = []
+                file_ids = []
                 for photo in update.message.photo:
                     photo_sizes.append(f"{photo.width}x{photo.height}")
-                logger.info(f"Photo sizes: {', '.join(photo_sizes)}")
+                    file_ids.append(photo.file_id)
                 
-                # Send acknowledgment for the photo
-                return await send_message(chat_id, "📷 Your photo has been received and stored")
+                logger.info(f"Photo sizes: {', '.join(photo_sizes)}")
+                logger.info(f"Photo file IDs: {', '.join(file_ids)}")
+                
+                # Try to get info about the largest photo
+                try:
+                    if update.message.photo:
+                        # Get the largest photo (last in the array)
+                        largest_photo = update.message.photo[-1]
+                        file_info = await bot.get_file(largest_photo.file_id)
+                        logger.info(f"Photo file path: {file_info.file_path}")
+                except Exception as file_error:
+                    logger.error(f"Error getting file info: {file_error}")
+                
+                # Make sure we respond to the photo quickly
+                try:
+                    # Send acknowledgment for the photo - with direct call to ensure it happens
+                    result = await send_message(chat_id, "📷 Your photo has been received and stored")
+                    logger.info(f"Photo response result: {result}")
+                    return result
+                except Exception as photo_error:
+                    # Special error handling for photos
+                    logger.error(f"CRITICAL - Error responding to photo: {photo_error}")
+                    # Try one more time with basic message
+                    try:
+                        basic_result = await bot.send_message(chat_id=chat_id, text="📷 Photo received")
+                        return {"success": True, "message_id": basic_result.message_id, "recovery": True}
+                    except:
+                        logger.error("Failed in recovery attempt for photo")
+                        pass
+                    return {"success": False, "error": str(photo_error)}
             
             elif update.message.document:
                 logger.info(f"Processing document: {update.message.document.file_name}")
@@ -133,6 +164,16 @@ async def handle_update(update_data):
     except Exception as e:
         logger.error(f"Error handling update: {e}")
         logger.error(f"Update data that caused the error: {json.dumps(update_data, default=str)[:300]}")
+        
+        # Critical recovery - try to send a message if we can determine the chat_id
+        try:
+            if isinstance(update_data, dict) and "message" in update_data and "chat" in update_data["message"] and "id" in update_data["message"]["chat"]:
+                recovery_chat_id = update_data["message"]["chat"]["id"]
+                logger.info(f"Attempting recovery response to chat_id: {recovery_chat_id}")
+                await bot.send_message(chat_id=recovery_chat_id, text="✅ Message received (recovery response)")
+        except Exception as recovery_error:
+            logger.error(f"Recovery attempt failed: {recovery_error}")
+        
         return {"success": False, "error": str(e)}
 
 async def set_webhook():
@@ -175,10 +216,13 @@ async def process_telegram_update(request_body):
         
         # Log the incoming update with more detail for debugging
         update_type = "unknown"
+        is_photo = False
         if isinstance(update_data, dict):
             if "message" in update_data:
                 if "photo" in update_data["message"]:
                     update_type = "photo"
+                    is_photo = True
+                    logger.info("📸 PHOTO DETECTED - Processing with priority")
                 elif "text" in update_data["message"]:
                     update_type = "text"
                 elif "document" in update_data["message"]:
@@ -189,13 +233,25 @@ async def process_telegram_update(request_body):
                 update_type = "non_message"
         
         logger.info(f"Received update type: {update_type}")
-        logger.info(f"Received update data: {json.dumps(update_data, default=str)[:300]}...")
         
-        # Process the update
-        result = await handle_update(update_data)
+        # For photo updates, log more details
+        if is_photo:
+            logger.info(f"Photo update details: {json.dumps(update_data.get('message', {}).get('photo', []), default=str)}")
+        else:
+            logger.info(f"Received update data: {json.dumps(update_data, default=str)[:300]}...")
         
-        # Return the result immediately without waiting
-        return {"success": True, "result": result}
+        # Process the update with special handling for photos
+        if is_photo:
+            # For photos, make sure we handle them with special care
+            logger.info("Starting priority processing for photo")
+            # Process directly and make sure we get a response
+            result = await handle_update(update_data)
+            logger.info(f"Photo processing result: {result}")
+            return {"success": True, "result": result, "update_type": "photo"}
+        else:
+            # Regular updates
+            result = await handle_update(update_data)
+            return {"success": True, "result": result, "update_type": update_type}
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"success": False, "error": str(e)}
@@ -338,8 +394,29 @@ def handler(request, context):
                     logger.warning("Received webhook without update_id - might not be from Telegram")
                     logger.warning(f"Body keys: {', '.join(body.keys() if isinstance(body, dict) else ['<not a dict>'])}")
             
+            # Special handling for photo messages
+            is_photo = False
+            if (isinstance(body, dict) and 
+                "message" in body and 
+                isinstance(body["message"], dict) and 
+                "photo" in body["message"]):
+                is_photo = True
+                logger.info("📸 PHOTO MESSAGE detected in handler")
+            
             # Process the update asynchronously
             response = asyncio.run(process_telegram_update(body))
+            
+            # For photos, make sure we're sending a more specific response
+            if is_photo:
+                logger.info("Photo processing completed in handler")
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps({
+                        "success": True, 
+                        "message": "Photo received and processed",
+                        "timestamp": datetime.now().isoformat()
+                    })
+                }
             
             # Return success response
             return {
