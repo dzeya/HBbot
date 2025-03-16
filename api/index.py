@@ -376,107 +376,99 @@ def handler(request, context):
     
     # Webhook endpoint
     elif method == 'POST':
+        # DIAGNOSTIC HANDLER - Just log everything and respond
+        logger.info("🔍 DIAGNOSTIC HANDLER: Telegram webhook received")
+        
+        # 1. Log the raw request data
         try:
-            # Get the body from the request
-            body = request.get('body', '{}')
-            logger.info(f"Received POST body type: {type(body)}")
+            logger.info(f"Request meta: {request.get('headers', {})}")
+        except:
+            pass
             
-            # Convert to dict if it's a string
-            if isinstance(body, str):
-                logger.info(f"Converting string body to JSON. Length: {len(body)}")
+        # 2. Get the body
+        try:
+            body_raw = request.get('body', '{}')
+            logger.info(f"Body type: {type(body_raw)}")
+            logger.info(f"Body length: {len(str(body_raw))}")
+            
+            # Try to parse as JSON
+            body = body_raw
+            if isinstance(body_raw, str):
                 try:
-                    body = json.loads(body)
-                    logger.info(f"Successfully parsed JSON. Keys: {', '.join(body.keys() if isinstance(body, dict) else ['<not a dict>'])}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Error parsing JSON: {e}")
-                    logger.error(f"Body preview: {body[:100]}")
-                    # Return error response for invalid JSON
-                    return {
-                        'statusCode': 400,
-                        'body': json.dumps({'error': 'Invalid JSON payload'})
-                    }
+                    body = json.loads(body_raw)
+                    logger.info("Successfully parsed body as JSON")
+                except:
+                    logger.error("Failed to parse body as JSON")
+                    body = {"raw": body_raw[:100]}
             
-            # SUPER ULTRA SIMPLIFIED HANDLING
-            # Direct access to required fields without any complex processing
-            try:
-                # Extract essential information directly from JSON
-                message = body.get("message", {})
+            # Log the body contents 
+            logger.info(f"Body keys: {body.keys() if isinstance(body, dict) else 'Not a dict'}")
+            
+            # Extract message data
+            message = body.get("message", {}) if isinstance(body, dict) else {}
+            message_type = "unknown"
+            chat_id = None
+            
+            # Try to get chat_id
+            if isinstance(message, dict):
                 chat = message.get("chat", {})
-                chat_id = chat.get("id")
+                if isinstance(chat, dict):
+                    chat_id = chat.get("id")
+                    logger.info(f"Extracted chat_id: {chat_id}")
                 
-                # Determine message type
-                message_type = "unknown"
+                # Check for different message types
                 if "text" in message:
                     message_type = "text"
-                    text = message.get("text", "")
-                    logger.info(f"Text message: {text[:50]}")
-                    
-                    # Handle commands directly here
-                    if text.startswith('/start'):
-                        response_text = "👋 Welcome to the HB Telegram Bot! Your messages will be stored securely."
-                    elif text.startswith('/help'):
-                        response_text = "💬 This bot stores your messages and media in a secure database.\n\nCommands:\n/start - Start the bot\n/help - Show this help message\n/stats - Show your message statistics"
-                    elif text.startswith('/stats'):
-                        response_text = "📊 Stats functionality available in the full version"
-                    else:
-                        response_text = get_simple_message_response(message_type)
-                        
+                    logger.info(f"Message type: {message_type}, content: {message.get('text', '')[:50]}")
                 elif "photo" in message:
                     message_type = "photo"
-                    logger.info("📸 PHOTO detected")
-                    response_text = get_simple_message_response(message_type)
-                    
+                    logger.info(f"Message type: {message_type}")
+                    # Log photo structure
+                    photos = message.get("photo", [])
+                    logger.info(f"Photo array length: {len(photos)}")
+                    if photos:
+                        logger.info(f"First photo item: {photos[0]}")
+                        if len(photos) > 1:
+                            logger.info(f"Last photo item: {photos[-1]}")
                 elif "document" in message:
                     message_type = "document"
-                    logger.info("📎 DOCUMENT detected")
-                    response_text = get_simple_message_response(message_type)
-                    
+                    logger.info(f"Message type: {message_type}")
                 elif "video" in message:
                     message_type = "video"
-                    logger.info("🎬 VIDEO detected")
-                    response_text = get_simple_message_response(message_type)
-                    
+                    logger.info(f"Message type: {message_type}")
                 else:
-                    logger.info("Other message type")
-                    response_text = get_simple_message_response(message_type)
-                
-                # Respond directly if we have a chat_id
-                if chat_id and bot:
-                    logger.info(f"Sending direct response for {message_type} message")
+                    logger.info(f"Other message type, keys: {message.keys()}")
+            
+            # Always respond with success - we're just diagnosing
+            response_text = f"DIAGNOSTIC: Received message type: {message_type}"
+            
+            # Try to send a response if we have a chat_id
+            if chat_id and bot:
+                try:
                     asyncio.run(bot.send_message(chat_id=chat_id, text=response_text))
                     logger.info("Response sent successfully")
-                
-                # Return immediate success regardless of what happens afterwards
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'success': True,
-                        'message': f"{message_type} message processed",
-                        'timestamp': datetime.now().isoformat()
-                    })
-                }
-                
-            except Exception as direct_error:
-                logger.error(f"Error in direct handling: {direct_error}")
-                # If direct handling fails, just return success to Telegram anyway
-                # to prevent retry loops that could make the situation worse
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        'success': False,
-                        'message': 'Error occurred but acknowledged',
-                        'error': str(direct_error)
-                    })
-                }
-                
+                except Exception as e:
+                    logger.error(f"Failed to send response: {e}")
+            
+            # Return success
+            return {
+                'statusCode': 200,
+                'body': json.dumps({
+                    'success': True,
+                    'diagnostic': True,
+                    'message_type': message_type,
+                    'timestamp': datetime.now().isoformat()
+                })
+            }
+            
         except Exception as e:
-            logger.error(f"Error in webhook processing: {e}")
-            # Still return 200 to prevent Telegram from retrying
+            logger.error(f"Diagnostic error: {e}")
+            # Still return 200 to acknowledge
             return {
                 'statusCode': 200,
                 'body': json.dumps({
                     'success': False,
-                    'message': 'Error occurred but acknowledged', 
+                    'diagnostic': True,
                     'error': str(e)
                 })
             }
