@@ -84,81 +84,145 @@ async def set_webhook():
         logger.error(f"Error setting webhook: {e}")
         return {"status": "error", "message": str(e)}
 
+def dump_object(obj, name="object", max_depth=3, current_depth=0):
+    """Recursively dump object structure for debugging"""
+    if current_depth > max_depth:
+        return "..."
+    
+    if isinstance(obj, dict):
+        result = "{\n"
+        for k, v in obj.items():
+            if current_depth < max_depth:
+                result += "  " * (current_depth + 1) + f'"{k}": {dump_object(v, k, max_depth, current_depth + 1)},\n'
+            else:
+                result += "  " * (current_depth + 1) + f'"{k}": ...,\n'
+        result += "  " * current_depth + "}"
+        return result
+    elif isinstance(obj, list):
+        if not obj:
+            return "[]"
+        result = "[\n"
+        for i, item in enumerate(obj[:3]):  # Only show first 3 items
+            result += "  " * (current_depth + 1) + f"{dump_object(item, f'{name}[{i}]', max_depth, current_depth + 1)},\n"
+        if len(obj) > 3:
+            result += "  " * (current_depth + 1) + f"... ({len(obj) - 3} more items)\n"
+        result += "  " * current_depth + "]"
+        return result
+    elif isinstance(obj, (str, int, float, bool, type(None))):
+        return json.dumps(obj)
+    else:
+        # For non-serializable objects, show type and dir if available
+        try:
+            # For telegram.Update objects or similar
+            if hasattr(obj, 'to_dict'):
+                return dump_object(obj.to_dict(), name, max_depth, current_depth)
+            else:
+                return f"<{type(obj).__name__}: {str(obj)[:50]}>"
+        except:
+            return f"<{type(obj).__name__}>"
+
 async def handle_telegram_update(update_data):
     """Process an update from Telegram"""
     if not bot:
         return {"success": False, "error": "Bot not initialized"}
     
     try:
-        logger.info(f"Handling update: {json.dumps(update_data)[:200]}...")
+        # First, log the raw update data as is
+        logger.info("🔍 RAW UPDATE STRUCTURE: 🔍")
+        logger.info(dump_object(update_data, "update_data"))
         
         # Convert dict to Update object
         update = telegram.Update.de_json(update_data, bot)
         
+        # Log the Update object structure
+        logger.info("🔍 TELEGRAM UPDATE OBJECT STRUCTURE: 🔍")
+        logger.info(dump_object(update, "update"))
+        
         if not update or not update.message:
-            logger.warning("Update contains no message")
+            logger.warning("⚠️ Update contains no message")
             return {"success": False, "reason": "No message in update"}
         
         chat_id = update.message.chat_id
         logger.info(f"Processing message from chat_id: {chat_id}")
         
-        # Check for images/photos - EXPLICIT LOGGING
-        if update.message.photo:
-            photo_array = update.message.photo
-            logger.info(f"PHOTO DETECTED! Array length: {len(photo_array)}")
+        # Super detailed message inspection
+        msg = update.message
+        msg_dict = msg.to_dict() if hasattr(msg, 'to_dict') else None
+        
+        logger.info("📩 MESSAGE KEYS AND ATTRIBUTES: 📩")
+        if msg_dict:
+            logger.info(f"Message dict keys: {list(msg_dict.keys())}")
+        logger.info(f"Message object attributes: {dir(msg)}")
+        
+        # Check for images/photos - ENHANCED LOGGING
+        if hasattr(msg, 'photo') and msg.photo:
+            photo_array = msg.photo
+            logger.info(f"📸 PHOTO DETECTED! Array length: {len(photo_array)}")
             
             # Log details about each photo size
             for i, photo in enumerate(photo_array):
-                logger.info(f"Photo {i}: file_id={photo.file_id}, size={photo.width}x{photo.height}")
+                photo_dict = photo.to_dict() if hasattr(photo, 'to_dict') else {}
+                logger.info(f"Photo {i}: {dump_object(photo_dict)}")
+                logger.info(f"Photo {i} attributes: {dir(photo)}")
             
             # Get the largest photo (last in array)
-            file_id = photo_array[-1].file_id
-            logger.info(f"Using largest photo with file_id: {file_id}")
+            if photo_array:
+                file_id = photo_array[-1].file_id
+                logger.info(f"Using largest photo with file_id: {file_id}")
+                
+                # Try to get file info
+                try:
+                    file_info = await bot.get_file(file_id)
+                    logger.info(f"File info: {dump_object(file_info.to_dict() if hasattr(file_info, 'to_dict') else file_info)}")
+                except Exception as e:
+                    logger.error(f"Error getting file info: {e}")
             
-            # Send confirmation message
-            await bot.send_message(
-                chat_id=chat_id, 
-                text="📸 Your photo has been received and stored!"
-            )
-            
-            return {
-                "success": True, 
-                "message_type": "photo",
-                "file_id": file_id
-            }
-            
+                # Send confirmation message
+                await bot.send_message(
+                    chat_id=chat_id, 
+                    text="📸 Your photo has been received and stored! [DEEP DEBUG MODE]"
+                )
+                
+                return {
+                    "success": True, 
+                    "message_type": "photo",
+                    "file_id": file_id
+                }
+            else:
+                logger.error("Photo array is empty despite photo attribute being present!")
+                
         # Handle text messages
-        elif update.message.text:
-            text = update.message.text
-            logger.info(f"Text message: {text[:50]}...")
+        elif hasattr(msg, 'text') and msg.text:
+            text = msg.text
+            logger.info(f"Text message: {text[:100]}...")
             
             # Handle commands
             if text.startswith('/'):
                 if text.startswith('/start'):
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="👋 Welcome to the HB Telegram Bot! Your messages will be stored securely."
+                        text="👋 Welcome to the HB Telegram Bot! Your messages will be stored securely. [DEEP DEBUG MODE]"
                     )
                 elif text.startswith('/help'):
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="💬 This bot stores your messages and media in a secure database.\n\nCommands:\n/start - Start the bot\n/help - Show this help message\n/stats - Show your message statistics"
+                        text="💬 This bot stores your messages and media in a secure database.\n\nCommands:\n/start - Start the bot\n/help - Show this help message\n/stats - Show your message statistics\n\n[DEEP DEBUG MODE]"
                     )
                 elif text.startswith('/stats'):
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="📊 Stats functionality available in the full version"
+                        text="📊 Stats functionality available in the full version [DEEP DEBUG MODE]"
                     )
                 else:
                     await bot.send_message(
                         chat_id=chat_id,
-                        text="⚠️ Unknown command. Type /help for a list of commands."
+                        text="⚠️ Unknown command. Type /help for a list of commands. [DEEP DEBUG MODE]"
                     )
             else:
                 # Regular text message
                 await bot.send_message(
                     chat_id=chat_id,
-                    text="✅ Your message has been received and stored"
+                    text="✅ Your message has been received and stored [DEEP DEBUG MODE]"
                 )
                 
             return {
@@ -166,61 +230,91 @@ async def handle_telegram_update(update_data):
                 "message_type": "text",
                 "text": text[:100]  # Truncate for logging
             }
-            
-        # Handle documents
-        elif update.message.document:
-            doc = update.message.document
-            logger.info(f"Document received: {doc.file_name}, mime: {doc.mime_type}")
-            
-            await bot.send_message(
-                chat_id=chat_id,
-                text="📎 Your document has been received and stored"
-            )
-            
-            return {
-                "success": True,
-                "message_type": "document",
-                "file_name": doc.file_name
-            }
-            
-        # Handle videos
-        elif update.message.video:
-            video = update.message.video
-            logger.info(f"Video received: duration={video.duration}s, size={video.file_size} bytes")
-            
-            await bot.send_message(
-                chat_id=chat_id,
-                text="🎬 Your video has been received and stored"
-            )
-            
-            return {
-                "success": True,
-                "message_type": "video"
-            }
-            
-        # Other message types
+        
+        # Last resort - if nothing else matched, try a different attribute access approach
         else:
-            message_type = "unknown"
-            for attr in ["audio", "animation", "sticker", "voice", "location"]:
-                if hasattr(update.message, attr) and getattr(update.message, attr):
-                    message_type = attr
+            logger.info("⚠️ No standard message type detected, trying alternative approaches")
+            
+            # Enumerate all possible message types and check each one
+            message_types = [
+                "text", "photo", "document", "video", "audio", "animation", 
+                "sticker", "voice", "location", "contact", "poll", "venue"
+            ]
+            
+            found_type = None
+            for msg_type in message_types:
+                if hasattr(msg, msg_type) and getattr(msg, msg_type):
+                    found_type = msg_type
+                    logger.info(f"🔍 Found message type via attribute check: {found_type}")
                     break
+            
+            # Also check direct dictionary access if available
+            if msg_dict:
+                for msg_type in message_types:
+                    if msg_type in msg_dict and msg_dict[msg_type]:
+                        logger.info(f"🔍 Found message type via dict access: {msg_type}")
+                        if not found_type:
+                            found_type = msg_type
+            
+            # If we found a valid message type, try to handle it
+            if found_type:
+                logger.info(f"Handling message of type: {found_type}")
+                
+                # Special handling for photo messages found via dict
+                if found_type == "photo" and "photo" in msg_dict:
+                    photo_data = msg_dict["photo"]
+                    logger.info(f"Photo data from dict: {dump_object(photo_data)}")
                     
-            logger.info(f"Other message type received: {message_type}")
-            
-            await bot.send_message(
-                chat_id=chat_id,
-                text=f"✅ Your {message_type} has been received and stored"
-            )
-            
-            return {
-                "success": True,
-                "message_type": message_type
-            }
+                    # Try to extract file_id
+                    if isinstance(photo_data, list) and photo_data:
+                        last_photo = photo_data[-1]
+                        if isinstance(last_photo, dict) and "file_id" in last_photo:
+                            file_id = last_photo["file_id"]
+                            logger.info(f"Extracted file_id from dict: {file_id}")
+                            
+                            # Send response
+                            await bot.send_message(
+                                chat_id=chat_id,
+                                text=f"📸 Your photo has been received and stored! [DICT ACCESS MODE]"
+                            )
+                            
+                            return {
+                                "success": True,
+                                "message_type": "photo",
+                                "method": "dict_access",
+                                "file_id": file_id
+                            }
+                
+                # Generic response for other types
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Your {found_type} has been received and stored [DEEP DEBUG MODE]"
+                )
+                
+                return {
+                    "success": True,
+                    "message_type": found_type,
+                    "method": "alternative_detection"
+                }
+            else:
+                # Truly unknown message type
+                logger.warning(f"Unknown message type - dumping all message data for analysis:")
+                logger.warning(dump_object(msg_dict if msg_dict else msg))
+                
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text="✅ Your message (of unknown type) has been received [DEEP DEBUG MODE]"
+                )
+                
+                return {
+                    "success": True,
+                    "message_type": "unknown",
+                    "message_keys": list(msg_dict.keys()) if msg_dict else dir(msg)
+                }
             
     except Exception as e:
         logger.error(f"Error handling update: {e}")
-        logger.error(f"Update data that caused the error: {json.dumps(update_data)[:300]}")
+        logger.error(f"Update data that caused the error: {json.dumps(update_data)[:300] if isinstance(update_data, dict) else str(update_data)[:300]}")
         
         # Try to send an error notification if we can determine the chat_id
         try:
@@ -228,7 +322,7 @@ async def handle_telegram_update(update_data):
                 recovery_chat_id = update_data["message"]["chat"]["id"]
                 await bot.send_message(
                     chat_id=recovery_chat_id,
-                    text="⚠️ Sorry, there was an error processing your message. The team has been notified."
+                    text="⚠️ Sorry, there was an error processing your message. The team has been notified. [DEBUG MODE]"
                 )
         except Exception as recovery_error:
             logger.error(f"Recovery attempt failed: {recovery_error}")
@@ -261,6 +355,10 @@ def handler(request, context):
     """Vercel serverless function handler"""
     method = request.get('method', '')
     logger.info(f"Handler called with method: {method}")
+    
+    # Log entire request structure
+    logger.info("🔍 COMPLETE REQUEST STRUCTURE: 🔍")
+    logger.info(dump_object(request, "request"))
     
     # Health check endpoint
     if method == 'GET':
@@ -306,24 +404,43 @@ def handler(request, context):
     # Webhook endpoint
     elif method == 'POST':
         try:
-            # Get raw body data
+            # Get raw body data and log it
             body_raw = request.get('body', '{}')
+            logger.info(f"RAW BODY TYPE: {type(body_raw).__name__}")
+            
+            if isinstance(body_raw, str):
+                logger.info(f"RAW BODY (STRING): {body_raw[:500]}")  # First 500 chars for safety
+            elif isinstance(body_raw, dict):
+                logger.info(f"RAW BODY (DICT): {json.dumps(body_raw)[:500]}")
+            else:
+                logger.info(f"RAW BODY (OTHER): {str(body_raw)[:500]}")
             
             # Parse body if it's a string
             if isinstance(body_raw, str):
                 try:
                     body = json.loads(body_raw)
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse body as JSON")
+                    logger.info("Successfully parsed body as JSON")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse body as JSON: {e}")
+                    # Try to extract the error location
+                    lines = body_raw.split("\n")
+                    error_line = e.lineno - 1 if e.lineno <= len(lines) else len(lines) - 1
+                    error_context = lines[max(0, error_line-2):min(len(lines), error_line+3)]
+                    logger.error(f"Error context: {error_context}")
+                    
                     return {
-                        'statusCode': 400,
-                        'body': json.dumps({'error': 'Invalid JSON'})
+                        'statusCode': 200,  # Still return 200 to avoid Telegram retries
+                        'body': json.dumps({
+                            'error': 'Invalid JSON',
+                            'details': str(e),
+                            'body_preview': body_raw[:100] + "..." if len(body_raw) > 100 else body_raw
+                        })
                     }
             else:
                 body = body_raw
                 
             # Process the update
-            logger.info(f"Received webhook update: {json.dumps(body)[:200]}")
+            logger.info(f"🔄 PROCESSING WEBHOOK UPDATE")
             
             # Run the async function synchronously
             loop = asyncio.new_event_loop()
@@ -346,6 +463,10 @@ def handler(request, context):
             
         except Exception as e:
             logger.error(f"Error in POST handler: {e}")
+            # Include traceback for better debugging
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
+            
             return {
                 'statusCode': 200,  # Still return 200 to acknowledge to Telegram
                 'body': json.dumps({'error': str(e)})
