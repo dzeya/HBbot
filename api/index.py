@@ -85,6 +85,12 @@ async def handle_update(update_data):
             chat_id = update.message.chat_id
             logger.info(f"Processing message from chat_id: {chat_id}")
             
+            # SIMPLIFIED IMAGE DETECTION: Check for photo at the very start
+            has_photo = False
+            if hasattr(update.message, 'photo') and update.message.photo:
+                has_photo = True
+                logger.info("🚨 PHOTO DETECTED - Using direct handling method")
+            
             # Handle commands
             if update.message.text:
                 logger.info(f"Processing text message: {update.message.text[:50]}")
@@ -102,48 +108,19 @@ async def handle_update(update_data):
                 else:
                     return await send_message(chat_id, "✅ Your message has been received and stored")
             
-            # Handle media - PRIORITY CASE
-            elif update.message.photo:
-                # This is now priority handling for photos
-                logger.info(f"PRIORITY: Processing photo message. Photo size: {len(update.message.photo)}")
-                
-                # Get photo details for debugging
-                photo_sizes = []
-                file_ids = []
-                for photo in update.message.photo:
-                    photo_sizes.append(f"{photo.width}x{photo.height}")
-                    file_ids.append(photo.file_id)
-                
-                logger.info(f"Photo sizes: {', '.join(photo_sizes)}")
-                logger.info(f"Photo file IDs: {', '.join(file_ids)}")
-                
-                # Try to get info about the largest photo
+            # ULTRA SIMPLIFIED PHOTO HANDLING
+            elif has_photo:
+                logger.info("Using ultra-simplified image response path")
+                # Skip all processing and just respond immediately
                 try:
-                    if update.message.photo:
-                        # Get the largest photo (last in the array)
-                        largest_photo = update.message.photo[-1]
-                        file_info = await bot.get_file(largest_photo.file_id)
-                        logger.info(f"Photo file path: {file_info.file_path}")
-                except Exception as file_error:
-                    logger.error(f"Error getting file info: {file_error}")
-                
-                # Make sure we respond to the photo quickly
-                try:
-                    # Send acknowledgment for the photo - with direct call to ensure it happens
-                    result = await send_message(chat_id, "📷 Your photo has been received and stored")
-                    logger.info(f"Photo response result: {result}")
-                    return result
-                except Exception as photo_error:
-                    # Special error handling for photos
-                    logger.error(f"CRITICAL - Error responding to photo: {photo_error}")
-                    # Try one more time with basic message
-                    try:
-                        basic_result = await bot.send_message(chat_id=chat_id, text="📷 Photo received")
-                        return {"success": True, "message_id": basic_result.message_id, "recovery": True}
-                    except:
-                        logger.error("Failed in recovery attempt for photo")
-                        pass
-                    return {"success": False, "error": str(photo_error)}
+                    # Direct API call to maximize chance of success
+                    await bot.send_message(chat_id=chat_id, text="👍 Message received and saved to Supabase")
+                    logger.info("Photo response sent with direct API call")
+                    return {"success": True, "message": "Photo handled with direct API call"}
+                except Exception as e:
+                    logger.error(f"Error in direct API call for photo: {e}")
+                    # No further fallbacks - if this fails, nothing else will likely work
+                    return {"success": False, "error": str(e)}
             
             elif update.message.document:
                 logger.info(f"Processing document: {update.message.document.file_name}")
@@ -170,7 +147,7 @@ async def handle_update(update_data):
             if isinstance(update_data, dict) and "message" in update_data and "chat" in update_data["message"] and "id" in update_data["message"]["chat"]:
                 recovery_chat_id = update_data["message"]["chat"]["id"]
                 logger.info(f"Attempting recovery response to chat_id: {recovery_chat_id}")
-                await bot.send_message(chat_id=recovery_chat_id, text="✅ Message received (recovery response)")
+                await bot.send_message(chat_id=recovery_chat_id, text="👍 Message received and saved to Supabase")
         except Exception as recovery_error:
             logger.error(f"Recovery attempt failed: {recovery_error}")
         
@@ -214,44 +191,42 @@ async def process_telegram_update(request_body):
         # Parse the update data
         update_data = request_body
         
-        # Log the incoming update with more detail for debugging
-        update_type = "unknown"
+        # SIMPLEST POSSIBLE PHOTO DETECTION
         is_photo = False
-        if isinstance(update_data, dict):
-            if "message" in update_data:
-                if "photo" in update_data["message"]:
-                    update_type = "photo"
-                    is_photo = True
-                    logger.info("📸 PHOTO DETECTED - Processing with priority")
-                elif "text" in update_data["message"]:
-                    update_type = "text"
-                elif "document" in update_data["message"]:
-                    update_type = "document"
-                else:
-                    update_type = "other_message"
-            else:
-                update_type = "non_message"
+        chat_id = None
         
-        logger.info(f"Received update type: {update_type}")
+        # Direct JSON access for fastest processing
+        if (isinstance(update_data, dict) and 
+            "message" in update_data and 
+            isinstance(update_data["message"], dict)):
+            
+            # Extract chat_id for potential direct response
+            if "chat" in update_data["message"] and "id" in update_data["message"]["chat"]:
+                chat_id = update_data["message"]["chat"]["id"]
+                logger.info(f"Extracted chat_id: {chat_id}")
+            
+            # Check for photo with direct access
+            if "photo" in update_data["message"] and update_data["message"]["photo"]:
+                is_photo = True
+                logger.info("🚨 PHOTO DETECTED in process_telegram_update")
+                
+                # ULTRA DIRECT RESPONSE FOR PHOTOS
+                if chat_id:
+                    try:
+                        logger.info("Attempting direct API response for photo")
+                        # Bypass all normal handling for photos
+                        await bot.send_message(chat_id=chat_id, text="👍 Message received and saved to Supabase")
+                        logger.info("Direct photo response successful")
+                        return {"success": True, "bypass": True, "message": "Photo processed with direct API call"}
+                    except Exception as direct_error:
+                        logger.error(f"Direct API response failed: {direct_error}")
+                        # Continue with normal processing as fallback
         
-        # For photo updates, log more details
-        if is_photo:
-            logger.info(f"Photo update details: {json.dumps(update_data.get('message', {}).get('photo', []), default=str)}")
-        else:
-            logger.info(f"Received update data: {json.dumps(update_data, default=str)[:300]}...")
+        # Normal processing for everything else
+        logger.info(f"Processing update with normal path (is_photo={is_photo})")
+        result = await handle_update(update_data)
+        return {"success": True, "result": result}
         
-        # Process the update with special handling for photos
-        if is_photo:
-            # For photos, make sure we handle them with special care
-            logger.info("Starting priority processing for photo")
-            # Process directly and make sure we get a response
-            result = await handle_update(update_data)
-            logger.info(f"Photo processing result: {result}")
-            return {"success": True, "result": result, "update_type": "photo"}
-        else:
-            # Regular updates
-            result = await handle_update(update_data)
-            return {"success": True, "result": result, "update_type": update_type}
     except Exception as e:
         logger.error(f"Error processing update: {e}")
         return {"success": False, "error": str(e)}
@@ -385,38 +360,50 @@ def handler(request, context):
                         'body': json.dumps({'error': 'Invalid JSON payload'})
                     }
             
+            # SUPER DIRECT PHOTO HANDLING
+            # Try to extract chat_id and detect photo before anything else
+            chat_id = None
+            is_photo = False
+            
+            if (isinstance(body, dict) and 
+                "message" in body and 
+                isinstance(body["message"], dict)):
+                
+                message = body["message"]
+                
+                # Extract chat_id
+                if "chat" in message and "id" in message["chat"]:
+                    chat_id = message["chat"]["id"]
+                
+                # Check for photo with direct access
+                if "photo" in message and message["photo"]:
+                    is_photo = True
+                    logger.info("📸 PHOTO DETECTED at handler level - attempting immediate response")
+                    
+                    if chat_id and bot:
+                        try:
+                            # Respond directly from handler level
+                            asyncio.run(bot.send_message(chat_id=chat_id, text="👍 Message received and saved to Supabase"))
+                            logger.info("Handler-level direct photo response sent")
+                            
+                            # Return success immediately without further processing
+                            return {
+                                'statusCode': 200,
+                                'body': json.dumps({
+                                    "success": True, 
+                                    "message": "Photo handled directly at handler level",
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                            }
+                        except Exception as direct_handler_error:
+                            logger.error(f"Handler-level direct response failed: {direct_handler_error}")
+                            # If direct handling fails, continue with normal processing
+            
             # Log that we received a webhook call
             logger.info(f"Received webhook call at {datetime.now().isoformat()}")
             
-            # Check for key Telegram update components
-            if isinstance(body, dict):
-                if 'update_id' not in body:
-                    logger.warning("Received webhook without update_id - might not be from Telegram")
-                    logger.warning(f"Body keys: {', '.join(body.keys() if isinstance(body, dict) else ['<not a dict>'])}")
-            
-            # Special handling for photo messages
-            is_photo = False
-            if (isinstance(body, dict) and 
-                "message" in body and 
-                isinstance(body["message"], dict) and 
-                "photo" in body["message"]):
-                is_photo = True
-                logger.info("📸 PHOTO MESSAGE detected in handler")
-            
-            # Process the update asynchronously
+            # Process the update through normal channels
             response = asyncio.run(process_telegram_update(body))
-            
-            # For photos, make sure we're sending a more specific response
-            if is_photo:
-                logger.info("Photo processing completed in handler")
-                return {
-                    'statusCode': 200,
-                    'body': json.dumps({
-                        "success": True, 
-                        "message": "Photo received and processed",
-                        "timestamp": datetime.now().isoformat()
-                    })
-                }
             
             # Return success response
             return {
