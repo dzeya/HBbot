@@ -1,0 +1,5 @@
+dependencies = "Bump psycopg2-binary from 2.9.9 to 2.9.10"
+[[pull_requests]]
+uid = "8"
+author_uid = "dependabot[bot]"
+closes_threads = []
